@@ -1,0 +1,249 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
+
+enum AutonomyLevel { ASSIST SUPERVISED AUTONOMOUS }
+enum RunStatus { CREATED QUEUED PLANNING RUNNING WAITING_TOOL WAITING_APPROVAL RETRY_WAIT SUCCEEDED FAILED REJECTED DEAD_LETTER CANCELLED }
+enum ApprovalStatus { PENDING APPROVED REJECTED EXPIRED }
+enum WorkflowStatus { DRAFT ACTIVE INACTIVE ARCHIVED }
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  name String?
+  memberships Membership[]
+  approvals ApprovalRequest[] @relation("ApprovalReviewer")
+  createdAt DateTime @default(now())
+}
+model Organization {
+  id String @id @default(cuid())
+  name String
+  memberships Membership[]
+  workspaces Workspace[]
+  createdAt DateTime @default(now())
+}
+model Membership {
+  id String @id @default(cuid())
+  userId String
+  organizationId String
+  role String
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+  @@unique([userId,organizationId])
+}
+model Workspace {
+  id String @id @default(cuid())
+  organizationId String
+  name String
+  autonomy AutonomyLevel @default(SUPERVISED)
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+  brainEntries BrainEntry[]
+  agents AgentInstance[]
+  delegations Delegation[]
+  workflows Workflow[]
+  integrations IntegrationConnection[]
+  auditEvents AuditEvent[]
+  usage UsageRecord[]
+  approvals ApprovalRequest[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model BrainEntry {
+  id String @id @default(cuid())
+  workspaceId String
+  kind String
+  title String
+  content String @db.Text
+  version Int @default(1)
+  metadata Json?
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  createdAt DateTime @default(now())
+  @@index([workspaceId,kind])
+}
+model AgentTemplate {
+  id String @id @default(cuid())
+  slug String @unique
+  name String
+  role String
+  department String
+  objective String @db.Text
+  systemInstructions String @db.Text
+  defaultTools Json
+  outputSchemas Json?
+  managerCapable Boolean @default(false)
+  instances AgentInstance[]
+  createdAt DateTime @default(now())
+}
+model AgentInstance {
+  id String @id @default(cuid())
+  workspaceId String
+  templateId String
+  name String
+  status RunStatus @default(CREATED)
+  autonomy AutonomyLevel @default(SUPERVISED)
+  modelProvider String @default("mock")
+  modelId String @default("mock-v1")
+  personality Json?
+  memoryScope Json?
+  permissions Json?
+  monthlyBudget Decimal @default(25) @db.Decimal(12,2)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  template AgentTemplate @relation(fields:[templateId],references:[id])
+  assignedTasks DelegationTask[]
+  runs AgentRun[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId,status])
+}
+model Delegation {
+  id String @id @default(cuid())
+  workspaceId String
+  managerAgentId String
+  goal String @db.Text
+  status RunStatus @default(CREATED)
+  cost Decimal @default(0) @db.Decimal(12,6)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  tasks DelegationTask[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId,status])
+}
+model DelegationTask {
+  id String @id @default(cuid())
+  delegationId String
+  assignedAgentId String
+  title String
+  instructions String? @db.Text
+  status RunStatus @default(QUEUED)
+  dependencyIds Json @default("[]")
+  result Json?
+  delegation Delegation @relation(fields:[delegationId],references:[id],onDelete:Cascade)
+  assignedAgent AgentInstance @relation(fields:[assignedAgentId],references:[id])
+  approvals ApprovalRequest[]
+  runs AgentRun[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([delegationId,status])
+}
+model AgentRun {
+  id String @id @default(cuid())
+  agentId String
+  taskId String?
+  status RunStatus @default(CREATED)
+  input Json
+  output Json?
+  error Json?
+  startedAt DateTime?
+  finishedAt DateTime?
+  agent AgentInstance @relation(fields:[agentId],references:[id])
+  task DelegationTask? @relation(fields:[taskId],references:[id])
+  toolExecutions ToolExecution[]
+  usage UsageRecord[]
+  createdAt DateTime @default(now())
+  @@index([agentId,status])
+}
+model Workflow {
+  id String @id @default(cuid())
+  workspaceId String
+  name String
+  status WorkflowStatus @default(DRAFT)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  versions WorkflowVersion[]
+  runs WorkflowRun[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model WorkflowVersion {
+  id String @id @default(cuid())
+  workflowId String
+  version Int
+  definition Json
+  workflow Workflow @relation(fields:[workflowId],references:[id],onDelete:Cascade)
+  createdAt DateTime @default(now())
+  @@unique([workflowId,version])
+}
+model WorkflowRun {
+  id String @id @default(cuid())
+  workflowId String
+  workflowVersionId String
+  status RunStatus @default(CREATED)
+  trigger Json
+  output Json?
+  workflow Workflow @relation(fields:[workflowId],references:[id],onDelete:Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workflowId,status])
+}
+model IntegrationConnection {
+  id String @id @default(cuid())
+  workspaceId String
+  provider String
+  status String
+  encryptedCredentialRef String
+  scopes Json
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  toolExecutions ToolExecution[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([workspaceId,provider])
+}
+model ToolExecution {
+  id String @id @default(cuid())
+  agentRunId String
+  integrationId String?
+  toolName String
+  action String
+  input Json
+  output Json?
+  status RunStatus @default(CREATED)
+  idempotencyKey String @unique
+  reversible Boolean @default(false)
+  reverseDescriptor Json?
+  agentRun AgentRun @relation(fields:[agentRunId],references:[id],onDelete:Cascade)
+  integration IntegrationConnection? @relation(fields:[integrationId],references:[id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model ApprovalRequest {
+  id String @id @default(cuid())
+  workspaceId String
+  taskId String?
+  reviewerId String?
+  action String
+  reason String
+  payload Json
+  status ApprovalStatus @default(PENDING)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  task DelegationTask? @relation(fields:[taskId],references:[id])
+  reviewer User? @relation("ApprovalReviewer",fields:[reviewerId],references:[id])
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  @@index([workspaceId,status])
+}
+model UsageRecord {
+  id String @id @default(cuid())
+  workspaceId String
+  agentRunId String?
+  provider String
+  model String
+  inputTokens Int @default(0)
+  outputTokens Int @default(0)
+  cost Decimal @default(0) @db.Decimal(14,8)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  agentRun AgentRun? @relation(fields:[agentRunId],references:[id])
+  createdAt DateTime @default(now())
+  @@index([workspaceId,createdAt])
+}
+model AuditEvent {
+  id String @id @default(cuid())
+  workspaceId String
+  actorType String
+  actorId String?
+  category String
+  action String
+  resourceType String?
+  resourceId String?
+  payload Json
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  createdAt DateTime @default(now())
+  @@index([workspaceId,createdAt])
+}
