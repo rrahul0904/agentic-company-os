@@ -1,0 +1,13 @@
+{
+  "name": "agentic-company-os",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "pnpm --filter @agentic/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test:prototype": "python3 -m unittest discover -s prototype/tests -v",
+    "selfcheck": "node scripts/selfcheck.mjs"
+  }
+}

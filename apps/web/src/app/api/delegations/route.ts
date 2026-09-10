@@ -1,0 +1,1 @@
+export async function POST(req:Request){const body=await req.json();if(!body?.goal)return Response.json({error:"goal required"},{status:400});return Response.json({id:crypto.randomUUID(),goal:body.goal,status:"CREATED"},{status:201})}

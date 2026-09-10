@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+__pycache__/
+*.pyc
+coverage/
+dist/
+.DS_Store
