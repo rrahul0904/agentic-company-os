@@ -14,7 +14,8 @@ class ConversationContractTests(unittest.TestCase):
 
     def started(self, **kwargs):
         session = self.make_session(**kwargs)
-        session.start(workspace_id="workspace_a", consent=True)
+        session.start(workspace_id="workspace_a", consent=True,
+                      transcript_consent=kwargs.get("keep_transcript", False))
         return session
 
     def test_consent_is_required_even_for_voice_video_metadata(self):
@@ -30,7 +31,7 @@ class ConversationContractTests(unittest.TestCase):
         session = self.make_session(keep_transcript=True)
         with self.assertRaises(PermissionError):
             session.start(workspace_id="workspace_b", consent=True)
-        session.start(workspace_id="workspace_a", consent=True)
+        session.start(workspace_id="workspace_a", consent=True, transcript_consent=True)
         for method in (
             lambda: session.attach_sources(workspace_id="workspace_b", sources={"doc": "refund policy"}),
             lambda: session.ask(workspace_id="workspace_b", request_id="one", question="refund policy"),
@@ -61,8 +62,10 @@ class ConversationContractTests(unittest.TestCase):
         session = self.started(max_turns=1)
         session.attach_sources(workspace_id="workspace_a", sources={"s1": "Admissions open in June."})
         a = session.ask(workspace_id="workspace_a", request_id="req-1", question="Admissions open?")
-        b = session.ask(workspace_id="workspace_a", request_id="req-1", question="totally different text")
+        b = session.ask(workspace_id="workspace_a", request_id="req-1", question="Admissions open?")
         self.assertIs(a, b)
+        with self.assertRaises(ConversationError):
+            session.ask(workspace_id="workspace_a", request_id="req-1", question="totally different text")
         self.assertEqual(sum(e["type"] == "turn.completed" for e in session.events), 1)
         with self.assertRaises(ConversationError):
             session.ask(workspace_id="workspace_a", request_id="req-2", question="Admissions open?")
@@ -86,6 +89,9 @@ class ConversationContractTests(unittest.TestCase):
         self.assertIn({"type": "action.approval_required"}, session.events)
 
     def test_transcript_is_opt_in(self):
+        session = self.make_session(keep_transcript=True)
+        with self.assertRaises(PermissionError):
+            session.start(workspace_id="workspace_a", consent=True)
         off = self.started()
         off.ask(workspace_id="workspace_a", request_id="a", question="private text")
         with self.assertRaises(PermissionError):
