@@ -6,6 +6,7 @@ All media channels are metadata-only until explicitly integrated and verified.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from uuid import uuid4
@@ -60,6 +61,7 @@ class ConversationSession:
         self._consented = False
         self._sources: dict[str, str] = {}
         self._turns: dict[str, TurnResult] = {}
+        self._request_hashes: dict[str, str] = {}
         self._transcript: list[dict[str, str]] = []
         self.events: list[dict[str, str]] = []
 
@@ -67,12 +69,14 @@ class ConversationSession:
         if workspace_id != self.workspace_id:
             raise PermissionError("cross-workspace session access denied")
 
-    def start(self, *, workspace_id: str, consent: bool) -> None:
+    def start(self, *, workspace_id: str, consent: bool, transcript_consent: bool = False) -> None:
         self._authorize(workspace_id)
         if self.state != "CREATED":
             raise ConversationError("session already started")
         if consent is not True:
             raise PermissionError("explicit conversation consent required")
+        if self.keep_transcript and transcript_consent is not True:
+            raise PermissionError("separate transcript retention consent required")
         self._consented = True
         self.state = "ACTIVE"
         self.events.append({"type": "session.started", "channel": self.channel})
@@ -97,12 +101,15 @@ class ConversationSession:
             raise ConversationError("session is not active")
         if not isinstance(request_id, str) or not request_id.strip():
             raise ConversationError("request_id required")
+        if not isinstance(question, str) or not 0 < len(question.strip()) <= MAX_QUESTION_CHARS:
+            raise ConversationError("invalid question")
+        qhash = hashlib.sha256(question.encode("utf-8")).hexdigest()
         if request_id in self._turns:
+            if self._request_hashes[request_id] != qhash:
+                raise ConversationError("idempotency key reused with different content")
             return self._turns[request_id]  # retry is free and exactly-once in memory
         if len(self._turns) >= self.max_turns:
             raise ConversationError("session turn limit reached")
-        if not isinstance(question, str) or not 0 < len(question.strip()) <= MAX_QUESTION_CHARS:
-            raise ConversationError("invalid question")
         q_tokens = _tokens(question)
         matches = []
         for source_id, source_text in self._sources.items():
@@ -122,6 +129,7 @@ class ConversationSession:
             abstained = True
         result = TurnResult(request_id, answer, ids, abstained, self.channel, self.language)
         self._turns[request_id] = result
+        self._request_hashes[request_id] = qhash
         self.events.append({"type": "turn.completed", "abstained": str(abstained).lower()})
         if self.keep_transcript:
             self._transcript.append({"question": question, "answer": answer})
